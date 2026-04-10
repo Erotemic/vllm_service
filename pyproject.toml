@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm-litellm-autoconfig"
+version = "0.4.0"
+description = "Profile-driven vLLM + LiteLLM + Open WebUI stack generator"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+  "Jinja2>=3.1",
+  "requests>=2.31",
+]
+
+[project.scripts]
+vllm-stack = "vllm_service.cli:main"
+
+[tool.setuptools]
+packages = ["vllm_service"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+vllm_service = ["templates/*.yaml", "templates/*.j2"]

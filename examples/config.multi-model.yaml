@@ -1,0 +1,50 @@
+name: aiq-multi-model
+active_profile: qwen-mixed
+catalog:
+  builtin_models: true
+  builtin_profiles: true
+  user_models_file: models.yaml
+policy:
+  require_fit_validation: true
+  reserve_display_gpu: auto
+  forbid_reserved_gpu_use: false
+  require_homogeneous_multi_gpu_groups: true
+  minimum_vram_headroom_gib: 2
+  allow_unsupported_render: false
+runtime:
+  compose_cmd: docker compose
+  target_inventory: auto
+ports:
+  litellm: 14000
+  open_webui: 13000
+  postgres: 15432
+state:
+  hf_cache: ./state/hf-cache
+  open_webui: ./state/open-webui
+  postgres: ./state/postgres
+profiles:
+  qwen-mixed:
+    description: One Qwen model per GPU group with LiteLLM routing.
+    services:
+      - service_name: chat
+        model: qwen3.5-27b
+        placement:
+          strategy: exact
+          gpu_indices: [0]
+      - service_name: fast
+        model: qwen3.5-2b
+        placement:
+          strategy: exact
+          gpu_indices: [1]
+      - service_name: big
+        model: qwen3.5-122b
+        placement:
+          strategy: exact
+          gpu_indices: [2, 3]
+        topology:
+          tensor_parallel_size: 2
+    router:
+      aliases:
+        qwen3.5-27b: chat
+        qwen3.5-2b: fast
+        qwen3.5-122b: big

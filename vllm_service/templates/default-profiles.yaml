@@ -1,0 +1,607 @@
+profiles:
+  workstation-safe:
+    description: Single model on the first non-display GPU.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: chat
+        model: qwen3.5-9b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        qwen3.5-9b: chat
+  qwen-mixed:
+    description: Multiple Qwen models behind LiteLLM.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: qwen-27b
+        model: qwen3.5-27b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+      - service_name: qwen-2b
+        model: qwen3.5-2b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+      - service_name: qwen-122b
+        model: qwen3.5-122b-a10b
+        placement:
+          strategy: first_fit
+          gpu_count: 2
+        topology:
+          tensor_parallel_size: 2
+    router:
+      aliases:
+        qwen3.5-27b: qwen-27b
+        qwen3.5-2b: qwen-2b
+        qwen3.5-122b: qwen-122b
+  gemma-mixed:
+    description: Mix small and medium Gemma 4 models behind LiteLLM.
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: gemma-e4b
+        model: gemma4-e4b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+      - service_name: gemma-31b
+        model: gemma4-31b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+      - service_name: gemma-26b
+        model: gemma4-26b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        gemma4-e4b: gemma-e4b
+        gemma4-31b: gemma-31b
+        gemma4-26b: gemma-26b
+
+
+  gemma4-26b-workstation:
+    description: "Efficient default for agentic coding and general chat on a 4x96GB server."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - name: gemma-main
+        model: gemma4-26b
+        served_model_name: gemma4-26b
+        placement:
+          strategy: single_gpu
+          gpu_indices: [0]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 1
+          dp: 1
+        runtime:
+          max_model_len: 32768
+          gpu_memory_utilization: 0.9
+          max_num_seqs: 8
+          max_num_batched_tokens: 8192
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+          reasoning_history_policy: final_only
+
+    router:
+      aliases:
+        gemma4-26b: gemma-main
+
+    policy:
+      require_fit_validation: true
+      minimum_vram_headroom_gib: 8
+      allow_unsupported_render: false
+
+  gemma4-31b-quality:
+    description: "Higher-quality Gemma 4 profile for coding/reasoning on a 4x96GB server."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: gemma-main
+        model: gemma4-31b
+        served_model_name: gemma4-31b
+        placement:
+          strategy: single_gpu
+          gpu_indices: [0]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 1
+          dp: 1
+        runtime:
+          max_model_len: 32768
+          gpu_memory_utilization: 0.9
+          max_num_seqs: 8
+          max_num_batched_tokens: 8192
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+          reasoning_history_policy: final_only
+
+    router:
+      aliases:
+        gemma4-31b: gemma-main
+
+    policy:
+      require_fit_validation: true
+      minimum_vram_headroom_gib: 8
+      allow_unsupported_render: false
+
+
+  gemma4-31b-max-context:
+    description: "Maximize context window for Gemma 4 31B on a 4x96GB server. Sacrifices concurrency and co-hosting."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: gemma-main
+        model: gemma4-31b
+        served_model_name: gemma4-31b
+        placement:
+          strategy: multi_gpu
+          gpu_indices: [0, 1, 2, 3]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 4
+          dp: 1
+        runtime:
+          max_model_len: 262144
+          gpu_memory_utilization: 0.95
+          max_num_seqs: 1
+          max_num_batched_tokens: 4096
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+          reasoning_history_policy: final_only
+
+    router:
+      aliases:
+        gemma4-31b: gemma-main
+
+    policy:
+      require_fit_validation: true
+      minimum_vram_headroom_gib: 4
+      allow_unsupported_render: false
+
+  gemma4-26b-max-context:
+    description: "Maximize context window for Gemma 4 26B on a 4x96GB server. Sacrifices concurrency and co-hosting."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: gemma-main
+        model: gemma4-26b
+        served_model_name: gemma4-26b
+        placement:
+          strategy: multi_gpu
+          gpu_indices: [0, 1, 2, 3]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 4
+          dp: 1
+        runtime:
+          max_model_len: 262144
+          gpu_memory_utilization: 0.95
+          max_num_seqs: 1
+          max_num_batched_tokens: 4096
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+          reasoning_history_policy: final_only
+
+    router:
+      aliases:
+        gemma4-26b: gemma-main
+
+    policy:
+      require_fit_validation: true
+      minimum_vram_headroom_gib: 4
+      allow_unsupported_render: false
+
+  gemma4-e4b-3090-workstation:
+    description: "Single RTX 3090 workstation profile. Uses GPU 1 because GPU 0 is reserved for graphics."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: gemma-main
+        model: gemma4-e4b
+        served_model_name: gemma4-e4b
+        placement:
+          strategy: single_gpu
+          gpu_indices: [1]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 1
+          dp: 1
+        runtime:
+          max_model_len: 16384
+          gpu_memory_utilization: 0.92
+          max_num_seqs: 2
+          max_num_batched_tokens: 4096
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+          reasoning_history_policy: final_only
+
+    router:
+      aliases:
+        gemma4-e4b: gemma-main
+
+    policy:
+      require_fit_validation: true
+      minimum_vram_headroom_gib: 2
+      allow_unsupported_render: false
+
+
+  qwen3.5-0.8b-4x96:
+    description: "Tiny Qwen3.5 profile for utility tasks and high concurrency on a 4x96GB host."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: qwen-main
+        model: qwen3.5-0.8b
+        served_model_name: qwen3.5-0.8b
+        placement:
+          strategy: multi_gpu
+          gpu_indices: [0, 1, 2, 3]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 1
+          dp: 4
+        runtime:
+          max_model_len: 65536
+          gpu_memory_utilization: 0.85
+          max_num_seqs: 16
+          max_num_batched_tokens: 8192
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+
+    router:
+      aliases:
+        qwen3.5-0.8b: qwen-main
+
+  qwen3.5-2b-4x96:
+    description: "Small Qwen3.5 profile for cheap agent loops and high concurrency on a 4x96GB host."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: qwen-main
+        model: qwen3.5-2b
+        served_model_name: qwen3.5-2b
+        placement:
+          strategy: multi_gpu
+          gpu_indices: [0, 1, 2, 3]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 1
+          dp: 4
+        runtime:
+          max_model_len: 65536
+          gpu_memory_utilization: 0.88
+          max_num_seqs: 12
+          max_num_batched_tokens: 8192
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+
+    router:
+      aliases:
+        qwen3.5-2b: qwen-main
+
+  qwen3.5-4b-4x96:
+    description: "Small-mid Qwen3.5 profile for general use with high concurrency on a 4x96GB host."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: qwen-main
+        model: qwen3.5-4b
+        served_model_name: qwen3.5-4b
+        placement:
+          strategy: multi_gpu
+          gpu_indices: [0, 1, 2, 3]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 1
+          dp: 4
+        runtime:
+          max_model_len: 65536
+          gpu_memory_utilization: 0.88
+          max_num_seqs: 10
+          max_num_batched_tokens: 8192
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+
+    router:
+      aliases:
+        qwen3.5-4b: qwen-main
+
+  qwen3.5-9b-4x96:
+    description: "General-purpose Qwen3.5 profile with 4-way data parallelism on a 4x96GB host."
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: qwen-main
+        model: qwen3.5-9b
+        served_model_name: qwen3.5-9b
+        placement:
+          strategy: multi_gpu
+          gpu_indices: [0, 1, 2, 3]
+          prefer_homogeneous_group: true
+        topology:
+          tp: 1
+          dp: 4
+        runtime:
+          max_model_len: 65536
+          gpu_memory_utilization: 0.90
+          max_num_seqs: 8
+          max_num_batched_tokens: 8192
+          enable_prefix_caching: true
+          enable_chunked_prefill: true
+
+    router:
+      aliases:
+        qwen3.5-9b: qwen-main
+
+  # ── HELM evaluation profiles ──────────────────────────────────────────────
+  # One profile per HELM model. Switch to the target model, run evals, switch
+  # back. The served_model_name in each service matches the HELM side tag
+  # exactly so HELM can route without extra configuration.
+  # 72B models use tp=2; all others fit on a single 96GB GPU.
+
+  helm-qwen2-72b-instruct:
+    description: "HELM: qwen/qwen2-72b-instruct (Qwen/Qwen2-72B-Instruct, tp=2)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: qwen2-72b-instruct
+        placement:
+          strategy: first_fit
+          gpu_count: 2
+        topology:
+          tp: 2
+          dp: 1
+    router:
+      aliases:
+        qwen/qwen2-72b-instruct: helm-main
+
+  helm-qwen2.5-7b-instruct:
+    description: "HELM: qwen/qwen2.5-7b-instruct-turbo (Qwen/Qwen2.5-7B-Instruct)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: qwen2.5-7b-instruct
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        qwen/qwen2.5-7b-instruct-turbo: helm-main
+
+  helm-qwen2.5-72b-instruct:
+    description: "HELM: qwen/qwen2.5-72b-instruct-turbo (Qwen/Qwen2.5-72B-Instruct, tp=2)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: qwen2.5-72b-instruct
+        placement:
+          strategy: first_fit
+          gpu_count: 2
+        topology:
+          tp: 2
+          dp: 1
+    router:
+      aliases:
+        qwen/qwen2.5-72b-instruct-turbo: helm-main
+
+  helm-qwen3.5-9b:
+    description: "HELM: qwen/qwen3.5-9b (Qwen/Qwen3.5-9B)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: qwen3.5-9b
+        served_model_name: qwen/qwen3.5-9b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        qwen/qwen3.5-9b: helm-main
+
+  helm-gpt-oss-20b:
+    description: "HELM: openai/gpt-oss-20b"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: gpt-oss-20b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        openai/gpt-oss-20b: helm-main
+
+  helm-llama-3.1-8b-instruct:
+    description: "HELM: meta/llama-3.1-8b-instruct-turbo (meta-llama/Meta-Llama-3.1-8B-Instruct)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: llama-3.1-8b-instruct
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        meta/llama-3.1-8b-instruct-turbo: helm-main
+
+  helm-llama-3-8b-chat:
+    description: "HELM: meta/llama-3-8b-chat (meta-llama/Meta-Llama-3-8B-Instruct)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: llama-3-8b-instruct
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        meta/llama-3-8b-chat: helm-main
+
+  helm-llama-2-7b:
+    description: "HELM: meta/llama-2-7b (meta-llama/Llama-2-7b-hf)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: llama-2-7b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        meta/llama-2-7b: helm-main
+
+  helm-mistral-7b-instruct-v0.3:
+    description: "HELM: mistralai/mistral-7b-instruct-v0.3 (mistralai/Mistral-7B-Instruct-v0.3)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: mistral-7b-instruct-v0.3
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        mistralai/mistral-7b-instruct-v0.3: helm-main
+
+  helm-mistral-7b-v0.1:
+    description: "HELM: mistralai/mistral-7b-v0.1 (mistralai/Mistral-7B-v0.1)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: mistral-7b-v0.1
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        mistralai/mistral-7b-v0.1: helm-main
+
+  helm-falcon-7b:
+    description: "HELM: tiiuae/falcon-7b"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: falcon-7b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        tiiuae/falcon-7b: helm-main
+
+  helm-falcon-7b-instruct:
+    description: "HELM: tiiuae/falcon-7b-instruct"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: falcon-7b-instruct
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        tiiuae/falcon-7b-instruct: helm-main
+
+  helm-pythia-6.9b:
+    description: "HELM: eleutherai/pythia-6.9b (EleutherAI/pythia-6.9b)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: pythia-6.9b
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        eleutherai/pythia-6.9b: helm-main
+
+  helm-pythia-2.8b-v0:
+    description: "HELM: eleutherai/pythia-2.8b-v0 (EleutherAI/pythia-2.8b-v0)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: pythia-2.8b-v0
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        eleutherai/pythia-2.8b-v0: helm-main
+
+  helm-pythia-1b-v0:
+    description: "HELM: eleutherai/pythia-1b-v0 (EleutherAI/pythia-1b-v0)"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: pythia-1b-v0
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        eleutherai/pythia-1b-v0: helm-main
+
+  helm-vicuna-7b-v1.3:
+    description: "HELM: lmsys/vicuna-7b-v1.3"
+    vllm:
+      enable_responses_api_store: false
+      logging_level: INFO
+    services:
+      - service_name: helm-main
+        model: vicuna-7b-v1.3
+        placement:
+          strategy: first_fit
+          gpu_count: 1
+    router:
+      aliases:
+        lmsys/vicuna-7b-v1.3: helm-main
