@@ -16,3 +16,7 @@ generated/*
 !generated/kubeai/
 generated/kubeai/*
 !generated/kubeai/.gitignore
+!examples/
+!examples/single-node/
+!examples/single-node/config.yaml
+!examples/single-node/models.yaml
