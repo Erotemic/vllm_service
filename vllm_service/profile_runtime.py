@@ -50,7 +50,7 @@ def suggested_client_class(protocol_mode: str, transport_kind: str) -> str:
 
 
 def export_transport_config(service: dict[str, Any], deployment: dict[str, Any], *, base_url: str | None = None) -> dict[str, Any]:
-    transport = dict(service.get("transport", {}) or {})
+    transport = dict(service.get("benchmark_transport", service.get("transport", {})) or {})
     backend = str(deployment.get("backend", "compose")).lower()
     protocol = service.get("protocol_mode", "chat")
 

@@ -75,7 +75,7 @@ def _resolve_service(
 
     hf_model_id = service.get("hf_model_id", model.get("hf_model_id", ""))
     model_url = service.get("url") or model.get("url") or (f"hf://{hf_model_id}" if hf_model_id else "")
-    transport = deepcopy(service.get("transport", {}))
+    benchmark_transport = deepcopy(service.get("benchmark_transport", service.get("transport", {})))
 
     return {
         "service_name": service["service_name"],
@@ -118,7 +118,7 @@ def _resolve_service(
         "enable_auto_tool_choice": enable_auto_tool_choice,
         "tool_call_parser": tool_call_parser,
         "extra_args": deepcopy(service.get("extra_args", model.get("defaults", {}).get("extra_args", []))),
-        "transport": transport,
+        "benchmark_transport": benchmark_transport,
     }
 
 
@@ -185,7 +185,7 @@ def resolve(
         "tags": deepcopy(profile.get("tags", [])),
         "audit_notes": deepcopy(profile.get("audit_notes", [])),
         "notes": deepcopy(profile.get("notes", [])),
-        "transport": deepcopy(profile.get("transport", {})),
+        "benchmark_transport": deepcopy(profile.get("benchmark_transport", {})),
     }
 
     return {

@@ -7,7 +7,7 @@ import yaml
 from vllm_service.backends.compose_renderer import render_compose_artifacts
 from vllm_service.backends.kubeai_renderer import render_kubeai_artifacts
 from vllm_service.config import initial_config
-from vllm_service.exporters import export_helm_bundle
+from vllm_service.exporters import export_benchmark_bundle, export_helm_bundle
 from vllm_service.hardware import simulate_inventory
 from vllm_service.resolver import resolve
 from vllm_service.validator import validate_resolved
@@ -73,7 +73,7 @@ def test_compose_render_includes_profile_labels_and_aliases(tmp_path: Path) -> N
 
 def test_exported_model_deployments_shape_for_gpt_oss_completions(tmp_path: Path) -> None:
     plan = _plan(tmp_path, "gpt-oss-20b-completions")
-    result = export_helm_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
+    result = export_benchmark_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
     model_deployments = yaml.safe_load(result["model_deployments_path"].read_text())
     assert model_deployments == {
         "model_deployments": [
@@ -97,7 +97,7 @@ def test_exported_model_deployments_shape_for_gpt_oss_completions(tmp_path: Path
 
 def test_exported_model_deployments_shape_for_gpt_oss_chat(tmp_path: Path) -> None:
     plan = _plan(tmp_path, "gpt-oss-20b-chat")
-    result = export_helm_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
+    result = export_benchmark_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
     model_deployments = yaml.safe_load(result["model_deployments_path"].read_text())
     assert model_deployments == {
         "model_deployments": [
@@ -121,7 +121,7 @@ def test_exported_model_deployments_shape_for_gpt_oss_chat(tmp_path: Path) -> No
 
 def test_exported_model_deployments_shape_for_qwen_profile(tmp_path: Path) -> None:
     plan = _plan(tmp_path, "qwen2-72b-instruct-tp2-balanced")
-    result = export_helm_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
+    result = export_benchmark_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
     model_deployments = yaml.safe_load(result["model_deployments_path"].read_text())
     assert model_deployments == {
         "model_deployments": [
@@ -144,7 +144,7 @@ def test_exported_model_deployments_shape_for_qwen_profile(tmp_path: Path) -> No
 
 def test_kubeai_export_uses_openai_compatible_endpoint_semantics(tmp_path: Path) -> None:
     plan = _plan(tmp_path, "qwen2-72b-instruct-tp2-balanced", backend="kubeai")
-    result = export_helm_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
+    result = export_benchmark_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
     model_deployments = yaml.safe_load(result["model_deployments_path"].read_text())
     deployment = model_deployments["model_deployments"][0]
     assert deployment["client_spec"]["class_name"] == "helm.clients.openai_client.OpenAIClient"
@@ -154,13 +154,21 @@ def test_kubeai_export_uses_openai_compatible_endpoint_semantics(tmp_path: Path)
 
 def test_repo_relative_and_machine_local_bundle_paths_are_sane(tmp_path: Path) -> None:
     plan = _plan(tmp_path, "gpt-oss-20b-completions")
-    repo_result = export_helm_bundle(tmp_path, plan["deployment"])
+    repo_result = export_benchmark_bundle(tmp_path, plan["deployment"])
     repo_bundle = yaml.safe_load(repo_result["bundle_path"].read_text())
-    repo_smoke = yaml.safe_load(repo_result["smoke_manifest_path"].read_text())
-    assert repo_bundle["helm"]["model_deployments_repo_relative"] == "generated/helm/gpt-oss-20b-completions/model_deployments.yaml"
-    assert repo_smoke["model_deployments_fpath"] == "generated/helm/gpt-oss-20b-completions/model_deployments.yaml"
+    repo_smoke = yaml.safe_load(repo_result["benchmark_smoke_manifest_path"].read_text())
+    assert repo_bundle["benchmark"]["model_deployments_repo_relative"] == "generated/benchmark/gpt-oss-20b-completions/model_deployments.yaml"
+    assert repo_bundle["helm"]["model_deployments_repo_relative"] == "generated/benchmark/gpt-oss-20b-completions/model_deployments.yaml"
+    assert repo_smoke["model_deployments_fpath"] == "generated/benchmark/gpt-oss-20b-completions/model_deployments.yaml"
 
     machine_dir = Path("/tmp") / "machine-local-gpt-oss-bundle"
-    result = export_helm_bundle(tmp_path, plan["deployment"], output_dir=machine_dir)
-    smoke = yaml.safe_load(result["smoke_manifest_path"].read_text())
+    result = export_benchmark_bundle(tmp_path, plan["deployment"], output_dir=machine_dir)
+    smoke = yaml.safe_load(result["benchmark_smoke_manifest_path"].read_text())
     assert smoke["model_deployments_fpath"] == str((machine_dir / "model_deployments.yaml").resolve())
+
+
+def test_export_helm_bundle_alias_still_works(tmp_path: Path) -> None:
+    plan = _plan(tmp_path, "gpt-oss-20b-completions")
+    result = export_helm_bundle(tmp_path, plan["deployment"], output_dir=tmp_path / "bundle")
+    assert result["bundle_path"].name == "bundle.yaml"
+    assert result["benchmark_smoke_manifest_path"].name == "benchmark_smoke_manifest.yaml"

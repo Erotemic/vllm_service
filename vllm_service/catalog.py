@@ -124,7 +124,7 @@ def _normalize_service_from_profile(public_name: str, raw: dict[str, Any], model
         "tags": list(raw.get("tags", []) or []),
         "audit_notes": list(raw.get("audit_notes", []) or []),
         "notes": list(raw.get("notes", []) or []),
-        "transport": deepcopy(raw.get("transport", {})),
+        "benchmark_transport": deepcopy(raw.get("benchmark_transport", raw.get("transport", {}))),
     }
 
 
@@ -167,7 +167,7 @@ def _normalize_legacy_profile(name: str, raw: dict[str, Any], models: dict[str, 
                 "tags": list(raw.get("tags", []) or []),
                 "audit_notes": list(raw.get("audit_notes", []) or []),
                 "notes": list(raw.get("notes", []) or []),
-                "transport": deepcopy(raw.get("transport", {})),
+                "benchmark_transport": deepcopy(raw.get("benchmark_transport", raw.get("transport", {}))),
             }
         )
     primary = normalized_services[0] if normalized_services else None
@@ -189,7 +189,7 @@ def _normalize_legacy_profile(name: str, raw: dict[str, Any], models: dict[str, 
         "policy": deepcopy(raw.get("policy", {})),
         "vllm": deepcopy(raw.get("vllm", {})),
         "router": {"aliases": aliases},
-        "transport": deepcopy(raw.get("transport", {})),
+        "benchmark_transport": deepcopy(raw.get("benchmark_transport", raw.get("transport", {}))),
         "tags": list(raw.get("tags", []) or []),
         "audit_notes": list(raw.get("audit_notes", []) or []),
         "notes": list(raw.get("notes", []) or []),
@@ -229,7 +229,7 @@ def normalize_profile_catalog(catalog: dict[str, Any], models: dict[str, Any]) -
                 "policy": deepcopy(profile.get("policy", {})),
                 "vllm": deepcopy(profile.get("vllm", {})),
                 "router": {"aliases": {alias: service["service_name"] for alias in service["served_aliases"]}},
-                "transport": deepcopy(profile.get("transport", {})),
+                "benchmark_transport": deepcopy(profile.get("benchmark_transport", profile.get("transport", {}))),
                 "tags": list(profile.get("tags", []) or []),
                 "audit_notes": list(profile.get("audit_notes", []) or []),
                 "notes": list(profile.get("notes", []) or []),
@@ -245,7 +245,7 @@ def normalize_profile_catalog(catalog: dict[str, Any], models: dict[str, Any]) -
                 "policy": deepcopy(profile.get("policy", {})),
                 "vllm": deepcopy(profile.get("vllm", {})),
                 "router": deepcopy(profile.get("router", {})),
-                "transport": deepcopy(profile.get("transport", {})),
+                "benchmark_transport": deepcopy(profile.get("benchmark_transport", profile.get("transport", {}))),
                 "tags": list(profile.get("tags", []) or []),
                 "audit_notes": list(profile.get("audit_notes", []) or []),
                 "notes": list(profile.get("notes", []) or []),

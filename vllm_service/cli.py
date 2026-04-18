@@ -23,7 +23,7 @@ from .config import (
 )
 from .docker_utils import compose_down, compose_up
 from .env_utils import parse_env_file
-from .exporters import export_helm_bundle
+from .exporters import export_benchmark_bundle
 from .hardware import simulate_inventory
 from .kubeai_ops import deploy_rendered_artifacts, print_status as kubeai_print_status
 from .profile_runtime import default_base_url
@@ -333,7 +333,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_export_helm_bundle(args: argparse.Namespace) -> int:
+def _cmd_export_bundle(args: argparse.Namespace) -> int:
     cfg = load_config()
     plan = build_plan(
         cfg,
@@ -342,7 +342,7 @@ def cmd_export_helm_bundle(args: argparse.Namespace) -> int:
         inventory=effective_inventory(args),
     )
     ensure_renderable(plan)
-    result = export_helm_bundle(
+    result = export_benchmark_bundle(
         root_dir(),
         plan["deployment"],
         base_url=args.base_url,
@@ -351,6 +351,14 @@ def cmd_export_helm_bundle(args: argparse.Namespace) -> int:
     print(f"Wrote {result['bundle_path']}")
     print(f"Wrote {result['model_deployments_path']}")
     return 0
+
+
+def cmd_export_benchmark_bundle(args: argparse.Namespace) -> int:
+    return _cmd_export_bundle(args)
+
+
+def cmd_export_helm_bundle(args: argparse.Namespace) -> int:
+    return _cmd_export_bundle(args)
 
 
 def cmd_verify_profile(args: argparse.Namespace) -> int:
@@ -481,6 +489,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("explain")
     s.add_argument("--file", default=None)
     s.set_defaults(func=cmd_explain)
+
+    s = sub.add_parser("export-benchmark-bundle")
+    s.add_argument("profile")
+    s.add_argument("--base-url", default=None)
+    s.add_argument("--output-dir", default=None)
+    s.add_argument("--allow-unsupported", action="store_true")
+    s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
+    s.set_defaults(func=cmd_export_benchmark_bundle)
 
     s = sub.add_parser("export-helm-bundle")
     s.add_argument("profile")

@@ -368,7 +368,7 @@ profiles:
       tp: 2
       dp: 1
     tags: [audit, helm, qwen]
-    transport:
+    benchmark_transport:
       kind: vllm-direct
       deployment_name: vllm/qwen2-72b-instruct-local
       request_model_name: Qwen/Qwen2-72B-Instruct
@@ -391,7 +391,7 @@ profiles:
       strategy: first_fit
       gpu_count: 1
     tags: [audit, helm, qwen]
-    transport:
+    benchmark_transport:
       kind: vllm-direct
       deployment_name: vllm/qwen2-5-7b-instruct-turbo-local
       request_model_name: Qwen/Qwen2.5-7B-Instruct
@@ -415,7 +415,7 @@ profiles:
       tp: 2
       dp: 1
     tags: [audit, helm, qwen]
-    transport:
+    benchmark_transport:
       kind: vllm-direct
       deployment_name: vllm/qwen2-5-72b-instruct-turbo-local
       request_model_name: Qwen/Qwen2.5-72B-Instruct
@@ -481,7 +481,7 @@ profiles:
       strategy: first_fit
       gpu_count: 1
     tags: [audit, helm, gpt-oss, chat]
-    transport:
+    benchmark_transport:
       kind: openai-compatible
       deployment_name: litellm/gpt-oss-20b-chat-local
       request_model_name: openai/gpt-oss-20b
@@ -506,7 +506,7 @@ profiles:
       strategy: first_fit
       gpu_count: 1
     tags: [audit, helm, gpt-oss, completions]
-    transport:
+    benchmark_transport:
       kind: openai-compatible
       deployment_name: litellm/gpt-oss-20b-local
       request_model_name: openai/gpt-oss-20b

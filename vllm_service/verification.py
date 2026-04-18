@@ -3,13 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .exporters import helm_bundle_dir
+from .exporters import benchmark_bundle_dir, helm_bundle_dir
 from .profile_runtime import default_base_url
 
 
 def verify_profile(root: Path, deployment: dict[str, Any]) -> dict[str, Any]:
     service = deployment.get("services", [])[0] if deployment.get("services") else {}
-    bundle_dir = helm_bundle_dir(root, deployment["serving_profile"]["name"])
+    bundle_dir = benchmark_bundle_dir(root, deployment["serving_profile"]["name"])
+    legacy_bundle_dir = helm_bundle_dir(root, deployment["serving_profile"]["name"])
     expected = {
         "public_name": deployment["serving_profile"]["public_name"],
         "logical_model_name": service.get("logical_model_name", ""),
@@ -19,7 +20,8 @@ def verify_profile(root: Path, deployment: dict[str, Any]) -> dict[str, Any]:
         "generated_artifacts": {
             "compose": str(root / "generated" / "docker-compose.yml"),
             "kubeai_models": str(root / "generated" / "kubeai" / "models.yaml"),
-            "helm_bundle_dir": str(bundle_dir),
+            "benchmark_bundle_dir": str(bundle_dir),
+            "legacy_helm_bundle_dir": str(legacy_bundle_dir),
         },
     }
     checks = {

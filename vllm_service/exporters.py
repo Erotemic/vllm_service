@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
-from typing import Any
 
 import yaml
 
 from .profile_runtime import default_base_url, export_transport_config
+
+
+def benchmark_bundle_dir(root: Path, profile_name: str) -> Path:
+    return root / "generated" / "benchmark" / profile_name
 
 
 def helm_bundle_dir(root: Path, profile_name: str) -> Path:
@@ -19,7 +23,7 @@ def _maybe_repo_relative(root: Path, target: Path) -> str:
         return str(target.resolve())
 
 
-def _service_endpoint_shape(service: dict[str, Any], deployment: dict[str, Any], *, base_url: str | None) -> dict[str, Any]:
+def _service_endpoint_shape(service: dict, deployment: dict, *, base_url: str | None) -> dict:
     transport = export_transport_config(service, deployment, base_url=base_url)
     resolved_base_url = transport["base_url"] or default_base_url(deployment, explicit=base_url)
     protocol_mode = service.get("protocol_mode", "chat")
@@ -34,9 +38,9 @@ def _service_endpoint_shape(service: dict[str, Any], deployment: dict[str, Any],
     }
 
 
-def _helm_model_deployment(service: dict[str, Any], deployment: dict[str, Any], *, base_url: str | None) -> dict[str, Any]:
+def _benchmark_model_deployment(service: dict, deployment: dict, *, base_url: str | None) -> dict:
     transport = export_transport_config(service, deployment, base_url=base_url)
-    args: dict[str, Any] = {"base_url": transport["base_url"]}
+    args: dict[str, str] = {"base_url": transport["base_url"]}
     if transport["transport_kind"] == "vllm-direct":
         args["vllm_model_name"] = transport["request_model_name"]
     else:
@@ -63,7 +67,7 @@ def _manifest_template(
     model_deployment_name: str,
     model_deployments_fpath: str,
     max_eval_instances: int,
-) -> dict[str, Any]:
+) -> dict:
     return {
         "schema_version": 1,
         "experiment_name": experiment_name,
@@ -85,25 +89,37 @@ def _manifest_template(
     }
 
 
-def export_helm_bundle(root: Path, deployment: dict[str, Any], *, base_url: str | None = None, output_dir: Path | None = None) -> dict[str, Any]:
+def _write_legacy_alias(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def export_benchmark_bundle(root: Path, deployment: dict, *, base_url: str | None = None, output_dir: Path | None = None) -> dict:
     services = deployment.get("services", [])
     if len(services) != 1:
-        raise ValueError("HELM bundle export currently expects a single-service serving profile")
+        raise ValueError("Benchmark bundle export currently expects a single-service serving profile")
     service = services[0]
     if not service:
-        raise ValueError("Cannot export a HELM bundle for a profile with no resolved services")
+        raise ValueError("Cannot export a benchmark bundle for a profile with no resolved services")
 
-    bundle_dir = (output_dir or helm_bundle_dir(root, deployment["serving_profile"]["name"])).resolve()
+    default_dir = output_dir is None
+    bundle_dir = (output_dir or benchmark_bundle_dir(root, deployment["serving_profile"]["name"])).resolve()
     bundle_dir.mkdir(parents=True, exist_ok=True)
     endpoint_shape = _service_endpoint_shape(service, deployment, base_url=base_url)
     transport = export_transport_config(service, deployment, base_url=base_url)
 
-    model_deployments = {"model_deployments": [_helm_model_deployment(service, deployment, base_url=base_url)]}
+    model_deployments = {"model_deployments": [_benchmark_model_deployment(service, deployment, base_url=base_url)]}
     model_deployments_path = bundle_dir / "model_deployments.yaml"
     model_deployments_path.write_text(yaml.safe_dump(model_deployments, sort_keys=False), encoding="utf-8")
 
+    benchmark_section = {
+        "deployment_name": transport["deployment_name"],
+        "suggested_client_class": transport["client_class"],
+        "model_deployments_path": str(model_deployments_path),
+        "model_deployments_repo_relative": _maybe_repo_relative(root, model_deployments_path),
+    }
     bundle = {
-        "target": "helm",
+        "target": "crfm_helm_benchmark",
         "profile": {
             "name": deployment["serving_profile"]["name"],
             "public_name": deployment["serving_profile"]["public_name"],
@@ -118,7 +134,7 @@ def export_helm_bundle(root: Path, deployment: dict[str, Any], *, base_url: str 
             "resource_profile": service["resource_profile"],
             "kubernetes_name": service["kubernetes_name"],
         },
-        "transport": {
+        "benchmark_transport": {
             "backend": deployment["backend"],
             "router_type": deployment.get("router", {}).get("type", ""),
             "transport_kind": transport["transport_kind"],
@@ -127,12 +143,8 @@ def export_helm_bundle(root: Path, deployment: dict[str, Any], *, base_url: str 
             "api_key_value": transport["api_key_value"],
             "endpoint_shape": endpoint_shape,
         },
-        "helm": {
-            "deployment_name": transport["deployment_name"],
-            "suggested_client_class": transport["client_class"],
-            "model_deployments_path": str(model_deployments_path),
-            "model_deployments_repo_relative": _maybe_repo_relative(root, model_deployments_path),
-        },
+        "benchmark": benchmark_section,
+        "helm": dict(benchmark_section),
         "artifacts": {
             "model_deployments": str(model_deployments_path),
         },
@@ -142,32 +154,58 @@ def export_helm_bundle(root: Path, deployment: dict[str, Any], *, base_url: str 
     bundle_path.write_text(yaml.safe_dump(bundle, sort_keys=False), encoding="utf-8")
 
     model_deployments_fpath = _maybe_repo_relative(root, model_deployments_path)
-    smoke_example = _manifest_template(
+    benchmark_smoke_manifest = _manifest_template(
         experiment_name=f"{deployment['serving_profile']['name']}-smoke",
-        description=f"Machine-local smoke manifest for {deployment['serving_profile']['public_name']}.",
+        description=f"Machine-local benchmark smoke manifest for {deployment['serving_profile']['public_name']}.",
         model_name=service["logical_model_name"],
         model_deployment_name=transport["deployment_name"],
         model_deployments_fpath=model_deployments_fpath,
         max_eval_instances=5,
     )
-    full_example = _manifest_template(
+    benchmark_full_manifest = _manifest_template(
         experiment_name=f"{deployment['serving_profile']['name']}-full",
-        description=f"Machine-local full manifest for {deployment['serving_profile']['public_name']}.",
+        description=f"Machine-local benchmark full manifest for {deployment['serving_profile']['public_name']}.",
         model_name=service["logical_model_name"],
         model_deployment_name=transport["deployment_name"],
         model_deployments_fpath=model_deployments_fpath,
         max_eval_instances=1000,
     )
-    smoke_path = bundle_dir / "smoke_manifest.yaml"
-    full_path = bundle_dir / "full_manifest.yaml"
-    smoke_path.write_text(yaml.safe_dump(smoke_example, sort_keys=False), encoding="utf-8")
-    full_path.write_text(yaml.safe_dump(full_example, sort_keys=False), encoding="utf-8")
+    benchmark_smoke_path = bundle_dir / "benchmark_smoke_manifest.yaml"
+    benchmark_full_path = bundle_dir / "benchmark_full_manifest.yaml"
+    benchmark_smoke_path.write_text(yaml.safe_dump(benchmark_smoke_manifest, sort_keys=False), encoding="utf-8")
+    benchmark_full_path.write_text(yaml.safe_dump(benchmark_full_manifest, sort_keys=False), encoding="utf-8")
+
+    smoke_manifest_path = bundle_dir / "smoke_manifest.yaml"
+    full_manifest_path = bundle_dir / "full_manifest.yaml"
+    _write_legacy_alias(benchmark_smoke_path, smoke_manifest_path)
+    _write_legacy_alias(benchmark_full_path, full_manifest_path)
+
+    legacy_bundle_dir = None
+    if default_dir:
+        legacy_bundle_dir = helm_bundle_dir(root, deployment["serving_profile"]["name"]).resolve()
+        legacy_bundle_dir.mkdir(parents=True, exist_ok=True)
+        for path in [
+            model_deployments_path,
+            bundle_path,
+            benchmark_smoke_path,
+            benchmark_full_path,
+            smoke_manifest_path,
+            full_manifest_path,
+        ]:
+            _write_legacy_alias(path, legacy_bundle_dir / path.name)
 
     return {
         "bundle_dir": bundle_dir,
         "bundle_path": bundle_path,
         "model_deployments_path": model_deployments_path,
-        "smoke_manifest_path": smoke_path,
-        "full_manifest_path": full_path,
+        "benchmark_smoke_manifest_path": benchmark_smoke_path,
+        "benchmark_full_manifest_path": benchmark_full_path,
+        "smoke_manifest_path": smoke_manifest_path,
+        "full_manifest_path": full_manifest_path,
+        "legacy_bundle_dir": legacy_bundle_dir,
         "bundle": bundle,
     }
+
+
+def export_helm_bundle(root: Path, deployment: dict, *, base_url: str | None = None, output_dir: Path | None = None) -> dict:
+    return export_benchmark_bundle(root, deployment, base_url=base_url, output_dir=output_dir)
