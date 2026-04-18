@@ -156,50 +156,29 @@ The current repo also includes a K3s bootstrap path, but the backend itself is `
 
 ### Prerequisites
 
-#### Kubernetes (using the k3s flavor)
+## Prerequisites
 
-The KubeAI backend needs a working Kubernetes cluster, `kubectl`, and Helm.
-Helm is the Kubernetes package manager, and this repo uses it to install or
-update KubeAI in the cluster. K3s is the quickest way to get a single-node
-Kubernetes cluster for local use.
+### Kubernetes (using K3s)
+
+The KubeAI backend needs:
+
+* a working Kubernetes cluster
+* `kubectl`
+* Helm, the Kubernetes package manager
+
+K3s is the quickest way to get a single-node Kubernetes cluster for local use.
 
 Install K3s:
 
-Running this installs K3s on the current machine and turns it into a working
-single-node Kubernetes cluster. It installs kubectl and other helper tools,
-writes a kubeconfig, and starts K3s as a background service. For local use,
-that one machine is enough; for a larger setup, you add more nodes to the
-cluster later.
-
 ```bash
-# Use the latest
+# Latest
 curl -sfL https://get.k3s.io | sh -
 
-# Or choose a specific version 
+# Or pin a version
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='v1.34.3+k3s1' sh -
 ```
 
-Check that the cluster is up:
-
-```bash
-sudo kubectl get nodes
-```
-
-K3s installs `kubectl` and writes a kubeconfig to `/etc/rancher/k3s/k3s.yaml`.
-
-Install Helm (the Kubernetes package manager):
-
-```bash
-curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/83a46119086589a593a62ca544982977a60318ca/scripts/get-helm-4
-chmod 700 get_helm.sh
-./get_helm.sh
-```
-
-TODO: more secure install instruction
-
-The Helm project documents the install script as an official way to install the Helm CLI. 
-
-If you want `kubectl` to work without `sudo`, copy the K3s kubeconfig into your home directory:
+Make `kubectl` usable without `sudo`:
 
 ```bash
 sudo mkdir -p /etc/rancher/k3s/config.yaml.d
@@ -209,35 +188,55 @@ sudo systemctl restart k3s
 kubectl get nodes
 ```
 
-After those commands work, continue with the KubeAI setup commands below
+Install Helm:
 
+```bash
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/83a46119086589a593a62ca544982977a60318ca/scripts/get-helm-4
+chmod 700 get_helm.sh
+./get_helm.sh
+helm version
+```
 
-#### KubeAI
+### NVIDIA GPU support
 
-KubeAI is the service layer that runs on top of your Kubernetes cluster. This repo uses it to expose model-serving profiles through an OpenAI-compatible API. KubeAI can run on any Kubernetes cluster, and if you have GPUs available it can use them; for NVIDIA GPUs, KubeAI’s install guide says you should use the NVIDIA device-plugin resource-profile values file.
+If this machine has NVIDIA GPUs, install the NVIDIA device plugin and GPU feature discovery so Kubernetes can expose GPU resources and labels:
 
-Add the KubeAI Helm repository and update Helm:
+```bash
+helm repo add nvdp https://nvidia.github.io/k8s-device-plugin
+helm repo update
+helm upgrade -i nvdp nvdp/nvidia-device-plugin \
+  --version 0.17.1 \
+  --namespace nvidia-device-plugin \
+  --create-namespace \
+  --set gfd.enabled=true \
+  --set runtimeClassName=nvidia
+```
 
-```bash id="7m6nph"
+Check that GPU support is working:
+
+```bash
+kubectl -n nvidia-device-plugin get pods
+kubectl get node "$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')" \
+  -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}'
+kubectl get nodes --show-labels | tr ',' '\n' | grep 'nvidia.com/' || true
+```
+
+You want to see:
+
+* the NVIDIA plugin pods are `Running`
+* the node reports a non-empty `nvidia.com/gpu` count
+* the node has `nvidia.com/*` labels such as product and memory
+
+### KubeAI
+
+Add the KubeAI Helm repository:
+
+```bash
 helm repo add kubeai https://www.kubeai.org
 helm repo update
 ```
 
-If you need access to gated Hugging Face models, export your token first:
-
-```bash id="9bp3s6"
-export HF_TOKEN='<your-hugging-face-token>'
-```
-
-The KubeAI install can succeed even if you never look at the resource profiles. These profiles only matter when you deploy models. Before deploying models, check your node labels and make sure they match one of the GPU resource profiles in values-nvidia-k8s-device-plugin.yaml. KubeAI’s install guide says you likely will not need to modify the file, but you should confirm the profile nodeSelectors match your nodes
-
-Download the list of node selectors
-
-```
-curl -L -O https://raw.githubusercontent.com/substratusai/kubeai/refs/heads/main/charts/kubeai/values-nvidia-k8s-device-plugin.yaml
-```
-
-Actually do this:
+Generate a local KubeAI GPU resource profile file from the labels on this machine:
 
 ```bash
 NODE="$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')"
@@ -252,11 +251,6 @@ cat > values-kubeai-local-gpu.yaml <<EOF
 # nvidia.com/gpu.product=${PRODUCT}
 # nvidia.com/gpu.memory=${MEMORY}
 # nvidia.com/gpu.count=${COUNT}
-#
-# Example model usage:
-#   resourceProfile: ${PROFILE}:1
-#   resourceProfile: ${PROFILE}:2
-#   resourceProfile: ${PROFILE}:4
 
 resourceProfiles:
   ${PROFILE}:
@@ -270,118 +264,26 @@ cat values-kubeai-local-gpu.yaml
 ```
 
 
-Install KubeAI for an NVIDIA GPU cluster:
 
-```bash id="bl5d77"
-# Load local .env if present, but keep any already-exported HF_TOKEN.
-if [ -f .env ]; then
-  set -a
-  . ./.env
-  set +a
-fi
-
-
-KUBEAI_HELM_ARGS=(
-  helm upgrade --install kubeai kubeai/kubeai
-  -f values-kubeai-local-gpu.yaml
-  --wait
-)
-
-if [ -n "${HF_TOKEN:-}" ]; then
-  KUBEAI_HELM_ARGS+=(--set "secrets.huggingface.token=${HF_TOKEN}")
-fi
-
-"${KUBEAI_HELM_ARGS[@]}"
-```
-
-<Important: keep the safe copy / paste version but also keep the what it effectively resolves to version>
-
-This roughly resolves to but handles token stuff in your .env file, if you have
-`HF_TOKEN` in your env you can just run:
+HACK: use the name the code expects. TODO: fix the code to be robust later
 
 ```
-helm upgrade --install kubeai kubeai/kubeai \
-  -f values-kubeai-local-gpu.yaml \
-  --set secrets.huggingface.token="$HF_TOKEN" \
-  --wait
-```
-
-KubeAI’s install guide says that values file defines GPU-oriented `resourceProfiles`, and you should inspect it to make sure the `nodeSelectors` match the labels on your nodes.
-
-Check that KubeAI is up:
-
-```bash id="5y4biq"
-kubectl get nodes --show-labels
-kubectl get pods
-kubectl get crd models.kubeai.org
-```
-
-<DEBUG>
-
-
-Verify 
-
-sudo grep -n nvidia /var/lib/rancher/k3s/agent/etc/containerd/config.toml || \
-  echo "K3s did not detect an NVIDIA runtime; install/configure nvidia-container-runtime and restart k3s first."
-kubectl get runtimeclass nvidia || true
-
-
-helm repo add nvdp https://nvidia.github.io/k8s-device-plugin
-helm repo update
-helm upgrade -i nvdp nvdp/nvidia-device-plugin \
-  --version 0.17.1 \
-  --namespace nvidia-device-plugin \
-  --create-namespace \
-  --set gfd.enabled=true
-
-helm repo add nvdp https://nvidia.github.io/k8s-device-plugin
-helm repo update
-helm upgrade -i nvdp nvdp/nvidia-device-plugin \
-  --version 0.17.1 \
-  --namespace nvidia-device-plugin \
-  --create-namespace \
-  --set gfd.enabled=true \
-  --set runtimeClassName=nvidia
-
-
-kubectl -n nvidia-device-plugin get deploy,ds,pods -o wide
-kubectl get nodes --show-labels | tr ',' '\n' | egrep 'feature.node.kubernetes.io/pci-10de.present|nvidia.com/'
-kubectl get node aiq-gpu -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}'
-
-
-helm upgrade -i nvdp nvdp/nvidia-device-plugin \
-  --version 0.17.1 \
-  --namespace nvidia-device-plugin \
-  --create-namespace \
-  --set gfd.enabled=true \
-  --set 'tolerations[2].key=node-role.kubernetes.io/control-plane' \
-  --set 'tolerations[2].operator=Exists' \
-  --set 'tolerations[2].effect=NoSchedule' \
-  --set 'tolerations[3].key=node-role.kubernetes.io/master' \
-  --set 'tolerations[3].operator=Exists' \
-  --set 'tolerations[3].effect=NoSchedule' \
-  --set 'nfd.worker.tolerations[2].key=node-role.kubernetes.io/control-plane' \
-  --set 'nfd.worker.tolerations[2].operator=Exists' \
-  --set 'nfd.worker.tolerations[2].effect=NoSchedule'
-
-
-helm upgrade -i nvdp nvdp/nvidia-device-plugin \
-  --version 0.17.1 \
-  --namespace nvidia-device-plugin \
-  --create-namespace \
-  --set gfd.enabled=true \
-  --set runtimeClassName=nvidia
-
-NODE="$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')"
 PRODUCT="$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.product}')"
 MEMORY="$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.memory}')"
-COUNT="$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.count}')"
-SLUG="$(printf '%s' "$PRODUCT" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
-PROFILE="nvidia-gpu-${SLUG}-${MEMORY}mb"
 
 cat > values-kubeai-local-gpu.yaml <<EOF
 resourceProfiles:
-  ${PROFILE}:
+  gpu-single-default:
+    nodeSelector:
+      nvidia.com/gpu.product: "${PRODUCT}"
+      nvidia.com/gpu.memory: "${MEMORY}"
+
+  gpu-tp2-balanced:
+    nodeSelector:
+      nvidia.com/gpu.product: "${PRODUCT}"
+      nvidia.com/gpu.memory: "${MEMORY}"
+
+  gpu-tp2-maxctx:
     nodeSelector:
       nvidia.com/gpu.product: "${PRODUCT}"
       nvidia.com/gpu.memory: "${MEMORY}"
@@ -401,48 +303,59 @@ if [ -n "${HF_TOKEN:-}" ]; then
 fi
 
 "${KUBEAI_HELM_ARGS[@]}"
+```
 
+Install KubeAI. If `.env` exists, this will load `HF_TOKEN` from there. If `HF_TOKEN` is already exported in your shell, that works too. If you only use public models, `HF_TOKEN` is optional.
 
+```bash
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
 
-### Checks:
+KUBEAI_HELM_ARGS=(
+  helm upgrade --install kubeai kubeai/kubeai
+  -f values-kubeai-local-gpu.yaml
+  --wait
+)
 
+if [ -n "${HF_TOKEN:-}" ]; then
+  KUBEAI_HELM_ARGS+=(--set "secrets.huggingface.token=${HF_TOKEN}")
+fi
+
+"${KUBEAI_HELM_ARGS[@]}"
+```
+
+If `HF_TOKEN` is already in your environment, this effectively resolves to:
+
+```bash
+helm upgrade --install kubeai kubeai/kubeai \
+  -f values-kubeai-local-gpu.yaml \
+  --set secrets.huggingface.token="$HF_TOKEN" \
+  --wait
+```
+
+### Status check before using `python manage.py`
+
+Before using the `kubeai` backend in this repo, make sure the cluster is healthy:
+
+```bash
 kubectl get nodes
 kubectl get crd models.kubeai.org
 kubectl get pods
 kubectl get node "$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')" \
-
-kubectl get nodes --show-labels | tr ',' '\n' | grep 'nvidia.com/gpu.product\|nvidia.com/gpu.memory\|nvidia.com/gpu.count'
-
   -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}'
-
-
-</DEBUG>
-
-
-
-<PROBABLY REDUNDANT>
-Once KubeAI is installed, continue with the `vllm_service` commands below:
-
-```bash id="1qm9sn"
-python manage.py setup --backend kubeai --profile qwen2-5-7b-instruct-turbo-default --namespace kubeai
-python manage.py render
-python manage.py deploy
-python manage.py status
 ```
 
-To test the API, port-forward the KubeAI service and send a request to its OpenAI-compatible endpoint:
+You want to see:
 
-```bash id="nx6nt9"
-kubectl -n kubeai port-forward svc/kubeai 8000:80
-```
+* the node is `Ready`
+* `models.kubeai.org` exists
+* the `kubeai` pod is `Running`
+* the node reports a non-empty `nvidia.com/gpu` count
 
-```bash id="4jznh4"
-curl http://127.0.0.1:8000/openai/v1/models
-```
-
-KubeAI documents that its OpenAI-compatible layer serves `/v1/models`, `/v1/chat/completions`, and related endpoints, and the OpenAI client should use the KubeAI endpoint as its `base_url`.
-</PROBABLY REDUNDANT>
-
+After that, continue with the KubeAI getting-started commands below.
 
 
 ### Getting started
