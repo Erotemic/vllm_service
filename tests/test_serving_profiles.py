@@ -7,7 +7,8 @@ import yaml
 from vllm_service.backends.compose_renderer import render_compose_artifacts
 from vllm_service.backends.kubeai_renderer import render_kubeai_artifacts
 from vllm_service.config import initial_config
-from vllm_service.contracts import build_profile_contract
+from vllm_service.config import save_yaml
+from vllm_service.contracts import build_profile_contract, load_profile_contract
 from vllm_service.hardware import simulate_inventory
 from vllm_service.resolver import resolve
 from vllm_service.validator import validate_resolved
@@ -24,6 +25,13 @@ def _cfg(tmp_path: Path, *, backend: str = "compose") -> dict:
     }
     cfg["ports"] = {"litellm": 14000, "open_webui": 13000, "postgres": 15432}
     return cfg
+
+
+def _write_root_config(tmp_path: Path, *, backend: str = "compose") -> Path:
+    cfg = _cfg(tmp_path, backend=backend)
+    save_yaml(tmp_path / "config.yaml", cfg)
+    save_yaml(tmp_path / "models.yaml", {"models": {}, "profiles": {}})
+    return tmp_path
 
 
 def _deployment(tmp_path: Path, profile_name: str, *, backend: str = "compose", inventory: str = "4x96") -> dict:
@@ -86,3 +94,30 @@ def test_profile_contract_for_kubeai_uses_public_profile_name(tmp_path: Path) ->
     assert access["kind"] == "openai-compatible"
     assert access["request_model_name"] == "qwen2-72b-instruct-tp2-balanced"
     assert access["base_url"].endswith("/openai/v1")
+
+
+def test_load_profile_contract_uses_public_loader_for_qwen(tmp_path: Path) -> None:
+    root = _write_root_config(tmp_path)
+    contract = load_profile_contract(
+        "qwen2-72b-instruct-tp2-balanced",
+        root=root,
+        simulate_hardware_spec="2x96",
+    )
+    assert contract["profile"]["public_name"] == "qwen2-72b-instruct-tp2-balanced"
+    assert contract["services"][0]["model"]["logical_model_name"] == "qwen/qwen2-72b-instruct"
+
+
+def test_load_profile_contract_uses_public_loader_for_gpt_oss_variants(tmp_path: Path) -> None:
+    root = _write_root_config(tmp_path)
+    completions = load_profile_contract(
+        "gpt-oss-20b-completions",
+        root=root,
+        simulate_hardware_spec="1x96",
+    )
+    chat = load_profile_contract(
+        "gpt-oss-20b-chat",
+        root=root,
+        simulate_hardware_spec="1x96",
+    )
+    assert completions["services"][0]["protocol"]["mode"] == "completions"
+    assert chat["services"][0]["protocol"]["mode"] == "chat"

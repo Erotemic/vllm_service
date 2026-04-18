@@ -27,3 +27,20 @@ Cross-repo ownership refactor: this follow-up moved the center of gravity back w
 The most delicate part was deciding what to do with the old `benchmark_transport` information. I did not want to blindly delete it, because some of those hints are still genuinely useful to external consumers. The compromise was to treat them as optional compatibility access hints rather than as the main contract. The generic contract now has a backend-default access surface plus optional additional accesses, which let the downstream benchmark adapter deliberately choose between routed OpenAI-compatible access and direct-vLLM access without forcing benchmark jargon into the core profile schema. That feels like a better long-term shape: serving profiles stay general, while integrations can still express sharp downstream choices.
 
 I’m happier with the submodule after this change because its story is simpler: define named serving profiles, resolve them, render them, and describe them. The remaining benchmark exporter code is now clearly transitional debt rather than the repo’s identity. That is an acceptable temporary state because it preserves near-term operator usability while making the intended ownership boundary visible in both code and tests.
+
+## 2026-04-18 22:06:28 +0000
+
+Summary of user intent: keep the current ownership boundary intact, but harden the seam by giving `helm_audit` one small public contract-loading API to call and by preserving only serving-side access/auth hints in the generic contract.
+
+Model and configuration: Codex (GPT-5-based coding agent), default in-session configuration.
+
+This was a good reminder that “generic contract” does not mean “leave every consumer to reconstruct setup details.” The first contract work already moved benchmark translation out of the submodule, but the audit adapter still had to know too much about how to load config, force builtin catalogs on, simulate hardware, and resolve a profile. That meant the public seam was conceptually right but mechanically too wide. I added `vllm_service.contracts.load_profile_contract(...)` as a thin canonical entrypoint that loads config from the repo root, enables the builtin catalogs, applies optional backend and hardware overrides, resolves the selected profile, and returns the benchmark-agnostic contract. The important part is not the amount of code; it is that the policy now lives in one obvious place inside the serving repo rather than being reconstructed elsewhere.
+
+I also tightened the access metadata slightly by making auth expectations explicit with `auth_required`. That still feels like serving-side information to me, because it answers a generic question external consumers need to know: is this access surface expected to require a credential, and if so which env-var convention goes with it? What I explicitly did not move back in are benchmark-only concepts like HELM client classes, benchmark deployment naming, or manifest logic. The generic contract remains useful for any future consumer that wants to inspect how to talk to a resolved service without inheriting benchmark assumptions.
+
+The main tradeoff here is that `load_profile_contract` now imports config/resolution internals inside the submodule’s public contracts layer. I’m comfortable with that because the direction of dependency is still correct: public API over internals within one repo is fine, while cross-repo integration over several internals was the real smell. The tests now cover the new loader directly for the active Qwen and GPT-OSS variants so future refactors in config or resolution have a better chance of preserving the external contract shape.
+
+Design takeaways:
+1. A public contract is easier to keep stable when the same module also owns the canonical way to construct it.
+2. Auth expectations are part of an access surface; benchmark client mapping is not.
+3. When a lower-level repo exports a machine-readable contract, the highest-value public API is often a single “load and resolve this profile for me” function rather than a larger façade.

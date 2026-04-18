@@ -4,6 +4,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .config import CONFIG_FILE, initial_config, load_yaml
+from .hardware import simulate_inventory
+from .resolver import resolve
 from .profile_runtime import default_base_url
 
 
@@ -17,6 +20,7 @@ def _default_access(service: dict[str, Any], deployment: dict[str, Any]) -> dict
             "request_model_name": service["profile_public_name"],
             "auth_env_name": "KUBEAI_OPENAI_API_KEY",
             "auth_placeholder": "EMPTY",
+            "auth_required": False,
             "notes": ["Use the KubeAI OpenAI-compatible front door for routed requests."],
         }
     return {
@@ -26,6 +30,7 @@ def _default_access(service: dict[str, Any], deployment: dict[str, Any]) -> dict
         "request_model_name": service["served_model_name"],
         "auth_env_name": "LITELLM_MASTER_KEY",
         "auth_placeholder": "SET_LITELLM_MASTER_KEY_IN_ENV",
+        "auth_required": True,
         "notes": ["Use the LiteLLM router front door for routed requests."],
     }
 
@@ -46,6 +51,7 @@ def _additional_accesses(service: dict[str, Any], deployment: dict[str, Any]) ->
         or service["served_model_name"],
         "auth_env_name": benchmark_transport.get("api_key_env") or default_auth_env,
         "auth_placeholder": benchmark_transport.get("api_key_placeholder") or default_auth_placeholder,
+        "auth_required": bool(benchmark_transport.get("api_key_required", default_auth_placeholder != "EMPTY")),
         "notes": ["Optional compatibility access hint retained for external integrations."],
     }
     dedupe_key = (access["kind"], access["base_url"], access["request_model_name"])
@@ -139,3 +145,31 @@ def describe_profile_contract(
 ) -> dict[str, Any]:
     deployment = resolve_fn(root, config, inventory=inventory, profile_name=profile_name)
     return build_profile_contract(deployment)
+
+
+def load_profile_contract(
+    profile_name: str,
+    *,
+    root: Path | None = None,
+    backend: str | None = None,
+    simulate_hardware_spec: str | None = None,
+) -> dict[str, Any]:
+    root = (root or Path.cwd()).resolve()
+    config_path = root / CONFIG_FILE
+    if config_path.exists():
+        config = load_yaml(config_path)
+    else:
+        config = initial_config()
+    config.setdefault("catalog", {})
+    config["catalog"]["builtin_models"] = True
+    config["catalog"]["builtin_profiles"] = True
+    if backend is not None:
+        config["backend"] = backend
+    inventory = simulate_inventory(simulate_hardware_spec) if simulate_hardware_spec else None
+    return describe_profile_contract(
+        root,
+        config,
+        resolve_fn=resolve,
+        profile_name=profile_name,
+        inventory=inventory,
+    )

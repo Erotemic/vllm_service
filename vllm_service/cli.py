@@ -21,7 +21,7 @@ from .config import (
     normalized_catalogs,
     save_yaml,
 )
-from .contracts import build_profile_contract
+from .contracts import load_profile_contract
 from .docker_utils import compose_down, compose_up
 from .env_utils import parse_env_file
 from .exporters import export_benchmark_bundle
@@ -352,15 +352,12 @@ def _print_structured(data: dict[str, Any], fmt: str, output: str | None) -> int
 
 
 def cmd_describe_profile(args: argparse.Namespace) -> int:
-    cfg = load_config()
-    plan = build_plan(
-        cfg,
-        profile_name=args.profile,
-        allow_unsupported=effective_allow_unsupported(args, cfg),
-        inventory=effective_inventory(args),
+    contract = load_profile_contract(
+        args.profile,
+        root=root_dir(),
+        backend=getattr(args, "backend", None),
+        simulate_hardware_spec=getattr(args, "simulate_hardware", None),
     )
-    ensure_renderable(plan)
-    contract = build_profile_contract(plan["deployment"])
     return _print_structured(contract, args.format, args.output)
 
 
