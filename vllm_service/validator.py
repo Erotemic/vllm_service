@@ -7,6 +7,7 @@ def validate_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
     inventory = resolved.get("inventory", {})
     gpu_map = {g["index"]: g for g in inventory.get("gpus", [])}
     policy = resolved.get("policy", {})
+    backend = resolved.get("backend", "compose")
     errors: list[str] = []
     warnings: list[str] = []
     used_ports: set[int] = set()
@@ -16,6 +17,17 @@ def validate_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
     for alias, target in alias_targets.items():
         if target not in service_names:
             errors.append(f"router alias {alias!r} points to unknown service {target!r}")
+
+    if backend == "kubeai":
+        profiles = resolved.get("resource_profiles", {})
+        for svc in resolved.get("services", []):
+            resource_profile = str(svc.get("resource_profile", "")).strip()
+            if not resource_profile:
+                errors.append(f"service {svc['service_name']} is missing resource_profile for kubeai backend")
+            else:
+                profile_name = resource_profile.split(":", 1)[0]
+                if profile_name not in profiles:
+                    errors.append(f"service {svc['service_name']} references unknown resource profile {profile_name!r}")
 
     seen_service_names: set[str] = set()
     for svc in resolved.get("services", []):
@@ -27,7 +39,7 @@ def validate_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"service {svc['service_name']} placement failed: {svc['placement_error']}")
         gpu_indices = svc.get("gpu_indices", [])
         if not gpu_indices:
-            errors.append(f"service {svc['service_name']} has no GPUs assigned")
+            warnings.append(f"service {svc['service_name']} has no concrete GPU assignment in the rendered plan")
             continue
         if svc.get("tensor_parallel_size", 1) > len(gpu_indices):
             errors.append(f"service {svc['service_name']} has tensor_parallel_size larger than assigned GPU count")
@@ -55,10 +67,11 @@ def validate_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
             if len(names) > 1 or len(mems) > 1:
                 errors.append(f"service {svc['service_name']} uses a heterogeneous multi-GPU group")
 
-        port = int(resolved.get("ports", {}).get("litellm", 14000))
-        if port in used_ports:
-            errors.append(f"duplicate host port assignment: {port}")
-        used_ports.add(port)
+        if backend == "compose":
+            port = int(resolved.get("ports", {}).get("litellm", 14000))
+            if port in used_ports:
+                errors.append(f"duplicate host port assignment: {port}")
+            used_ports.add(port)
 
     return {
         "ok": not errors,

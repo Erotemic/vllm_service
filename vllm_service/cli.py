@@ -2,23 +2,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
+
+import requests
 
 from .benchmark import run_benchmark
 from .config import (
     CONFIG_FILE,
     GENERATED_DIR,
+    KUBEAI_GENERATED_DIR,
     MODELS_FILE,
     PLAN_FILE,
     initial_config,
-    normalized_state,
     load_yaml,
     save_yaml,
 )
 from .docker_utils import compose_down, compose_up
 from .env_utils import parse_env_file
 from .hardware import simulate_inventory
+from .kubeai_ops import deploy_rendered_artifacts, print_status as kubeai_print_status
 from .renderer import render_from_lock
 from .resolver import resolve
 from .validator import validate_resolved
@@ -40,6 +44,10 @@ def generated_dir() -> Path:
     return root_dir() / GENERATED_DIR
 
 
+def kubeai_generated_dir() -> Path:
+    return root_dir() / KUBEAI_GENERATED_DIR
+
+
 def plan_path() -> Path:
     return root_dir() / PLAN_FILE
 
@@ -52,8 +60,14 @@ def load_config() -> dict[str, Any]:
 
 
 def runtime_dir_for_config(cfg: dict[str, Any]) -> Path:
-    state = normalized_state(root_dir(), cfg.get("state", {}))
-    return Path(state["runtime"])
+    state = cfg.get("state", {})
+    runtime = state.get("runtime")
+    if not runtime:
+        return root_dir() / "state" / "runtime"
+    p = Path(runtime)
+    if p.is_absolute():
+        return p
+    return root_dir() / p
 
 
 def runtime_env_path(cfg: dict[str, Any]) -> Path:
@@ -75,6 +89,10 @@ def effective_inventory(args: argparse.Namespace | None) -> dict[str, Any] | Non
     if not spec:
         return None
     return simulate_inventory(spec)
+
+
+def backend_name(cfg: dict[str, Any]) -> str:
+    return str(cfg.get("backend", "compose")).lower()
 
 
 def build_plan(
@@ -113,16 +131,23 @@ def render_is_stale(cfg: dict[str, Any] | None = None) -> bool:
     cfg = load_config() if cfg is None else cfg
     cfg_path = config_path()
     current_plan = plan_path()
-    compose_file = generated_dir() / "docker-compose.yml"
-    runtime_env = runtime_env_path(cfg)
-    runtime_litellm_cfg = runtime_litellm_config_path(cfg)
+    backend = backend_name(cfg)
 
-    required_outputs = [
-        current_plan,
-        compose_file,
-        runtime_env,
-        runtime_litellm_cfg,
-    ]
+    if backend == "kubeai":
+        required_outputs = [
+            current_plan,
+            kubeai_generated_dir() / "namespace.yaml",
+            kubeai_generated_dir() / "kubeai-values.yaml",
+            kubeai_generated_dir() / "models.yaml",
+        ]
+    else:
+        required_outputs = [
+            current_plan,
+            generated_dir() / "docker-compose.yml",
+            runtime_env_path(cfg),
+            runtime_litellm_config_path(cfg),
+        ]
+
     if any(not p.exists() for p in required_outputs):
         return True
 
@@ -131,13 +156,8 @@ def render_is_stale(cfg: dict[str, Any] | None = None) -> bool:
         if cfg_path.stat().st_mtime > oldest_generated:
             return True
 
-    if current_plan.stat().st_mtime > compose_file.stat().st_mtime:
+    if any(current_plan.stat().st_mtime > p.stat().st_mtime for p in required_outputs if p != current_plan):
         return True
-    if current_plan.stat().st_mtime > runtime_env.stat().st_mtime:
-        return True
-    if current_plan.stat().st_mtime > runtime_litellm_cfg.stat().st_mtime:
-        return True
-
     return False
 
 
@@ -188,8 +208,7 @@ def cmd_lock(args: argparse.Namespace) -> int:
     )
     if not plan["validated"]["ok"] and not plan["allow_unsupported"]:
         raise SystemExit(
-            "Refusing to write plan.yaml because validation failed. "
-            "Use --allow-unsupported to override."
+            "Refusing to write plan.yaml because validation failed. Use --allow-unsupported to override."
         )
     save_plan(plan)
     print(json.dumps(plan, indent=2))
@@ -208,18 +227,20 @@ def cmd_render(args: argparse.Namespace) -> int:
     save_plan(plan)
     render_from_lock(root_dir(), plan)
     print(f"Wrote {plan_path()}")
-    print(f"Rendered Compose into {generated_dir()}")
-    print(f"Rendered mounted runtime files into {runtime_dir_for_config(cfg)}")
+    if backend_name(cfg) == "kubeai":
+        print(f"Rendered KubeAI artifacts into {kubeai_generated_dir()}")
+    else:
+        print(f"Rendered Compose into {generated_dir()}")
+        print(f"Rendered mounted runtime files into {runtime_dir_for_config(cfg)}")
     return 0
 
 
 def cmd_up(args: argparse.Namespace) -> int:
     cfg = load_config()
-    if render_is_stale():
-        render_args = argparse.Namespace(
-            profile=None,
-            allow_unsupported=effective_allow_unsupported(args, cfg),
-        )
+    if backend_name(cfg) != "compose":
+        raise SystemExit("`up` only supports the compose backend. Use `deploy` for kubeai.")
+    if render_is_stale(cfg):
+        render_args = argparse.Namespace(profile=None, allow_unsupported=effective_allow_unsupported(args, cfg), simulate_hardware=None)
         cmd_render(render_args)
     compose_up(
         cfg["runtime"]["compose_cmd"],
@@ -233,6 +254,8 @@ def cmd_up(args: argparse.Namespace) -> int:
 
 def cmd_down(args: argparse.Namespace) -> int:
     cfg = load_config()
+    if backend_name(cfg) != "compose":
+        raise SystemExit("`down` only supports the compose backend.")
     compose_down(cfg["runtime"]["compose_cmd"], generated_dir() / "docker-compose.yml", runtime_env_path(cfg))
     return 0
 
@@ -251,18 +274,21 @@ def cmd_switch(args: argparse.Namespace) -> int:
     save_plan(plan)
     render_from_lock(root_dir(), plan)
     if args.apply:
-        compose_down(
-            cfg["runtime"]["compose_cmd"],
-            generated_dir() / "docker-compose.yml",
-            generated_dir() / ".env",
-        )
-        compose_up(
-            cfg["runtime"]["compose_cmd"],
-            generated_dir() / "docker-compose.yml",
-            generated_dir() / ".env",
-            detach=False,
-            remove_orphans=True,
-        )
+        if backend_name(cfg) == "compose":
+            compose_down(
+                cfg["runtime"]["compose_cmd"],
+                generated_dir() / "docker-compose.yml",
+                generated_dir() / ".env",
+            )
+            compose_up(
+                cfg["runtime"]["compose_cmd"],
+                generated_dir() / "docker-compose.yml",
+                generated_dir() / ".env",
+                detach=False,
+                remove_orphans=True,
+            )
+        else:
+            deploy_rendered_artifacts(root_dir(), plan["deployment"])
     print(f"Switched active_profile to {args.profile}")
     return 0
 
@@ -273,7 +299,8 @@ def cmd_list_models(args: argparse.Namespace) -> int:
     cfg = load_config() if config_path().exists() else initial_config()
     cats = merged_catalogs(root_dir(), cfg)
     for name, model in cats.get("models", {}).items():
-        print(f"{name}: {model['hf_model_id']}")
+        ref = model.get("hf_model_id") or model.get("url", "")
+        print(f"{name}: {ref}")
     return 0
 
 
@@ -307,12 +334,79 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deploy(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    if render_is_stale(cfg):
+        render_args = argparse.Namespace(profile=None, allow_unsupported=effective_allow_unsupported(args, cfg), simulate_hardware=None)
+        cmd_render(render_args)
+    if backend_name(cfg) == "kubeai":
+        plan = load_yaml(plan_path())
+        deploy_rendered_artifacts(root_dir(), plan["deployment"])
+        return 0
+    compose_up(
+        cfg["runtime"]["compose_cmd"],
+        generated_dir() / "docker-compose.yml",
+        generated_dir() / ".env",
+        detach=args.detach,
+        remove_orphans=True,
+    )
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    if backend_name(cfg) == "kubeai":
+        namespace = cfg.get("cluster", {}).get("namespace", "kubeai")
+        kubeai_print_status(namespace)
+        return 0
+    proc = subprocess.run(cfg["runtime"]["compose_cmd"].split() + ["-f", str(generated_dir() / "docker-compose.yml"), "ps"])
+    return int(proc.returncode)
+
+
+def _infer_default_base_url(cfg: dict[str, Any], args: argparse.Namespace) -> str:
+    if args.base_url:
+        return args.base_url.rstrip("/")
+    if backend_name(cfg) == "kubeai":
+        ingress = cfg.get("cluster", {}).get("ingress", {})
+        host = ingress.get("host", "")
+        if ingress.get("enabled") and host:
+            return f"http://{host}/openai/v1"
+        return "http://127.0.0.1:8000/openai/v1"
+    return f"http://127.0.0.1:{cfg['ports']['litellm']}/v1"
+
+
+def cmd_smoke_test(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    env = parse_env_file(runtime_env_path(cfg)) if backend_name(cfg) == "compose" else {}
+    base_url = _infer_default_base_url(cfg, args)
+    headers = {"Content-Type": "application/json"}
+    api_key = args.api_key or env.get("LITELLM_MASTER_KEY", "")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    models_resp = requests.get(f"{base_url}/models", headers=headers, timeout=30)
+    models_resp.raise_for_status()
+    models = models_resp.json().get("data", [])
+    print(json.dumps(models_resp.json(), indent=2))
+    if args.skip_chat:
+        return 0
+    if not models:
+        raise SystemExit("No models returned from /models")
+    model_name = args.model or models[0]["id"]
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": args.prompt}],
+        "max_tokens": args.max_tokens,
+    }
+    resp = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=120)
+    resp.raise_for_status()
+    print(json.dumps(resp.json(), indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description=(
-            "Primary workflow: init -> edit config.yaml -> render -> up. "
-            "Advanced commands like resolve/validate/lock still exist for inspection."
-        )
+        description="Primary workflow: init -> edit config.yaml -> render -> deploy. Compose and KubeAI backends are both supported."
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -320,33 +414,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_init)
 
-    s = sub.add_parser("resolve")
-    s.add_argument("--profile", default=None)
-    s.add_argument("--allow-unsupported", action="store_true")
-    s.add_argument("--simulate-hardware", default=None, metavar="NxM",
-                   help="Simulate N GPUs with M GiB each (e.g. 4x96). Skips nvidia-smi detection.")
-    s.set_defaults(func=cmd_resolve)
-
-    s = sub.add_parser("validate")
-    s.add_argument("--profile", default=None)
-    s.add_argument("--allow-unsupported", action="store_true")
-    s.add_argument("--simulate-hardware", default=None, metavar="NxM",
-                   help="Simulate N GPUs with M GiB each (e.g. 4x96). Skips nvidia-smi detection.")
-    s.set_defaults(func=cmd_validate)
-
-    s = sub.add_parser("lock")
-    s.add_argument("--profile", default=None)
-    s.add_argument("--allow-unsupported", action="store_true")
-    s.add_argument("--simulate-hardware", default=None, metavar="NxM",
-                   help="Simulate N GPUs with M GiB each (e.g. 4x96). Skips nvidia-smi detection.")
-    s.set_defaults(func=cmd_lock)
-
-    s = sub.add_parser("render")
-    s.add_argument("--profile", default=None)
-    s.add_argument("--allow-unsupported", action="store_true")
-    s.add_argument("--simulate-hardware", default=None, metavar="NxM",
-                   help="Simulate N GPUs with M GiB each (e.g. 4x96). Skips nvidia-smi detection.")
-    s.set_defaults(func=cmd_render)
+    for name, func in [("resolve", cmd_resolve), ("validate", cmd_validate), ("lock", cmd_lock), ("render", cmd_render)]:
+        s = sub.add_parser(name)
+        s.add_argument("--profile", default=None)
+        s.add_argument("--allow-unsupported", action="store_true")
+        s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
+        s.set_defaults(func=func)
 
     s = sub.add_parser("up")
     s.add_argument("--allow-unsupported", action="store_true")
@@ -360,8 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("profile")
     s.add_argument("--apply", action="store_true")
     s.add_argument("--allow-unsupported", action="store_true")
-    s.add_argument("--simulate-hardware", default=None, metavar="NxM",
-                   help="Simulate N GPUs with M GiB each (e.g. 4x96). Skips nvidia-smi detection.")
+    s.add_argument("--simulate-hardware", default=None, metavar="NxM", help="Simulate N GPUs with M GiB each (e.g. 4x96, 2x80).")
     s.set_defaults(func=cmd_switch)
 
     s = sub.add_parser("list-models")
@@ -379,6 +451,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--base-url", default=None)
     s.add_argument("--api-key", default=None)
     s.set_defaults(func=cmd_benchmark)
+
+    s = sub.add_parser("deploy")
+    s.add_argument("-d", "--detach", action="store_true")
+    s.add_argument("--allow-unsupported", action="store_true")
+    s.set_defaults(func=cmd_deploy)
+
+    s = sub.add_parser("status")
+    s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("smoke-test")
+    s.add_argument("--base-url", default=None)
+    s.add_argument("--api-key", default=None)
+    s.add_argument("--model", default=None)
+    s.add_argument("--prompt", default="Say hello in one sentence.")
+    s.add_argument("--max-tokens", type=int, default=128)
+    s.add_argument("--skip-chat", action="store_true")
+    s.set_defaults(func=cmd_smoke_test)
 
     return p
 

@@ -13,9 +13,8 @@ CONFIG_FILE = Path("config.yaml")
 MODELS_FILE = Path("models.yaml")
 GENERATED_DIR = Path("generated")
 PLAN_FILE = GENERATED_DIR / "plan.yaml"
+KUBEAI_GENERATED_DIR = GENERATED_DIR / "kubeai"
 
-# Keep these aliases so other modules do not need to care whether the
-# user-facing generated artifact is called "plan.yaml" or something else.
 RESOLVED_FILE = PLAN_FILE
 LOCK_FILE = PLAN_FILE
 
@@ -50,6 +49,22 @@ def default_state_paths() -> dict[str, str]:
     }
 
 
+def default_cluster_config() -> dict[str, Any]:
+    return {
+        "namespace": "kubeai",
+        "kubeai_release_name": "kubeai",
+        "kubeai_chart": "kubeai/kubeai",
+        "service_name": "kubeai",
+        "ingress": {
+            "enabled": False,
+            "class_name": "traefik",
+            "host": "",
+            "path_prefix": "/",
+            "tls_secret_name": "",
+        },
+    }
+
+
 def normalized_state(root: Path, state: dict[str, Any] | None) -> dict[str, str]:
     normalized = deepcopy(default_state_paths())
     for key, value in (state or {}).items():
@@ -60,6 +75,10 @@ def normalized_state(root: Path, state: dict[str, Any] | None) -> dict[str, str]
             p = root / p
         normalized[key] = str(p)
     return normalized
+
+
+def normalized_cluster(config: dict[str, Any] | None) -> dict[str, Any]:
+    return deep_merge(default_cluster_config(), config or {})
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -95,8 +114,8 @@ def deep_merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
 
 
 def merged_catalogs(root: Path, config: dict[str, Any]) -> dict[str, Any]:
-    built_models = builtin_models_catalog()
-    built_profiles = builtin_profiles_catalog()
+    built_models = builtin_models_catalog() if config.get("catalog", {}).get("builtin_models", True) else {}
+    built_profiles = builtin_profiles_catalog() if config.get("catalog", {}).get("builtin_profiles", True) else {}
     user_path = root / config.get("catalog", {}).get("user_models_file", str(MODELS_FILE))
     user = load_yaml(user_path) if user_path.exists() else {}
     return {
@@ -107,10 +126,10 @@ def merged_catalogs(root: Path, config: dict[str, Any]) -> dict[str, Any]:
 
 def initial_config() -> dict[str, Any]:
     inventory = detect_inventory()
-    # TODO: better default profile selection
     default_profile = "qwen-mixed" if inventory.get("gpu_count", 0) >= 4 else "workstation-safe"
     return {
         "name": "local-llm-stack",
+        "backend": "compose",
         "active_profile": default_profile,
         "catalog": {
             "builtin_models": True,
@@ -132,5 +151,7 @@ def initial_config() -> dict[str, Any]:
         "ports": deepcopy(DEFAULT_PORTS),
         "images": deepcopy(PINNED_IMAGES),
         "state": default_state_paths(),
+        "cluster": default_cluster_config(),
+        "resource_profiles": {},
         "profiles": {},
     }
