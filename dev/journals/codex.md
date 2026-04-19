@@ -116,3 +116,18 @@ Design takeaways:
 1. Generated output should be derivable from canonical state, not reused as canonical state itself.
 2. A compatibility fallback is only real if normal output generation cannot silently disable it.
 3. When syncing user-supplied Helm values, preserving unknown keys is often safer than inventing a lossy normalization layer.
+
+## 2026-04-19 00:07:41 +0000
+
+Summary of user intent: apply the smallest clean fix for the remaining KubeAI regression by making `deploy`/staleness detection notice changes to `kubeai-values.local.yaml`, while preserving the new source-of-truth split and the config fallback behavior.
+
+Model and configuration: Codex (GPT-5-based coding agent), default in-session configuration.
+
+This was a narrow but important follow-up. Once `kubeai-values.local.yaml` became the explicit canonical synced source, it also became a real input to the rendered plan, which means staleness detection had to treat it the same way it already treats `config.yaml`. Without that, `deploy` could keep reusing an older rendered plan after the canonical local file changed, which would undercut the whole point of having a synced source in the first place. The fix was intentionally small: when the backend is `kubeai`, `render_is_stale()` now compares the modification time of `kubeai-values.local.yaml` against the current rendered outputs and forces a rerender if the local file is newer.
+
+The tests here matter more than the code size. I added one direct stale-check test and one deploy-rerender test because they pin two different promises: first, that the CLI recognizes the canonical local file as an input to render freshness, and second, that `deploy` actually consumes the updated canonical file rather than merely reporting “stale” in theory. I kept the existing config-fallback test in place so the repo still proves the legacy path is unaffected when no synced local file exists.
+
+Design takeaways:
+1. Once a file becomes canonical input, stale detection must treat it as input everywhere apply-style commands rely on freshness checks.
+2. A clean source-of-truth split is only complete when freshness logic follows the same split.
+3. Focused tests around stale detection are worth adding because timestamp-based bugs are easy to reintroduce during unrelated CLI cleanup.

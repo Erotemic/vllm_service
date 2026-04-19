@@ -19,6 +19,7 @@ from .config import (
     MODELS_FILE,
     PLAN_FILE,
     initial_config,
+    kubeai_local_values_path,
     load_kubeai_resource_profiles,
     load_yaml,
     normalized_catalogs,
@@ -331,6 +332,10 @@ def render_is_stale(cfg: dict[str, Any] | None = None) -> bool:
         oldest_generated = min(p.stat().st_mtime for p in required_outputs)
         if cfg_path.stat().st_mtime > oldest_generated:
             return True
+        if backend == "kubeai":
+            local_values_path = kubeai_local_values_path(root_dir())
+            if local_values_path.exists() and local_values_path.stat().st_mtime > oldest_generated:
+                return True
 
     if any(current_plan.stat().st_mtime > p.stat().st_mtime for p in required_outputs if p != current_plan):
         return True

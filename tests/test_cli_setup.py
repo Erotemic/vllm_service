@@ -4,6 +4,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -221,6 +222,80 @@ def test_kubeai_synced_source_is_preferred_over_config_and_preserves_unknown_fie
     assert generated_values["resourceProfiles"]["gpu-single-default"]["nodeSelector"]["nvidia.com/gpu.product"] == "NVIDIA_TEST_GPU"
     assert generated_values["resourceProfiles"]["gpu-single-default"]["extraField"] == "keep-me"
     assert "example.com/profile-source" not in generated_values["resourceProfiles"]["gpu-single-default"].get("nodeSelector", {})
+
+
+def test_kubeai_local_values_change_marks_render_stale(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "values-kubeai-local-gpu.yaml"
+    write_kubeai_values_file(source)
+    run_cli(
+        tmp_path,
+        "setup",
+        "--backend",
+        "kubeai",
+        "--profile",
+        "qwen2-5-7b-instruct-turbo-default",
+        "--namespace",
+        "kubeai",
+        "--resource-profiles-file",
+        str(source),
+    )
+    run_cli(tmp_path, "render", "--simulate-hardware", "1x96")
+    monkeypatch.chdir(tmp_path)
+    assert cli_mod.render_is_stale() is False
+    time.sleep(1.1)
+    values_doc = yaml.safe_load(kubeai_local_values_path(tmp_path).read_text())
+    values_doc["resourceProfiles"]["gpu-single-default"]["nodeSelector"]["example.com/profile-source"] = "updated-local"
+    kubeai_local_values_path(tmp_path).write_text(yaml.safe_dump(values_doc, sort_keys=False), encoding="utf-8")
+    assert cli_mod.render_is_stale() is True
+
+
+def test_kubeai_deploy_rerenders_from_updated_local_values(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "values-kubeai-local-gpu.yaml"
+    write_kubeai_values_file(source)
+    run_cli(
+        tmp_path,
+        "setup",
+        "--backend",
+        "kubeai",
+        "--profile",
+        "qwen2-5-7b-instruct-turbo-default",
+        "--namespace",
+        "kubeai",
+        "--resource-profiles-file",
+        str(source),
+    )
+    run_cli(tmp_path, "render", "--simulate-hardware", "1x96")
+    monkeypatch.chdir(tmp_path)
+
+    values_doc = yaml.safe_load(kubeai_local_values_path(tmp_path).read_text())
+    time.sleep(1.1)
+    values_doc["resourceProfiles"]["gpu-single-default"]["nodeSelector"]["example.com/profile-source"] = "deploy-rerender"
+    kubeai_local_values_path(tmp_path).write_text(yaml.safe_dump(values_doc, sort_keys=False), encoding="utf-8")
+
+    observed: dict[str, object] = {}
+
+    def fake_deploy_rendered_artifacts(root: Path, deployment: dict) -> None:
+        observed["source"] = deployment["resource_profiles_source"]
+
+    monkeypatch.setattr(cli_mod, "deploy_rendered_artifacts", fake_deploy_rendered_artifacts)
+    args = argparse.Namespace(
+        profile=None,
+        backend=None,
+        compose_cmd=None,
+        litellm_port=None,
+        open_webui_port=None,
+        postgres_port=None,
+        namespace=None,
+        ingress_host=None,
+        ingress_enabled=None,
+        detach=False,
+        allow_unsupported=False,
+        simulate_hardware="1x96",
+    )
+    cli_mod.cmd_deploy(args)
+    generated_values = yaml.safe_load((tmp_path / "generated" / "kubeai" / "kubeai-values.yaml").read_text())
+    assert observed["source"] == str(kubeai_local_values_path(tmp_path))
+    assert generated_values["resourceProfiles"]["gpu-single-default"]["nodeSelector"]["example.com/profile-source"] == "deploy-rerender"
 
 
 def test_switch_apply_persists_only_active_profile_and_uses_transient_overrides(
