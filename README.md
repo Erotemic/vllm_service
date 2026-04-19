@@ -609,3 +609,52 @@ Useful signs while debugging:
 * the first request may create the model-serving pod
 * `ContainerCreating` on the first serving pod often just means the image is still being pulled
 
+
+
+HARD CODED FIXES:
+
+TODO: integrate this into the readme so you don't get into a failing state to start with.
+
+
+cat > values-kubeai-local-gpu.yaml <<'EOF'
+resourceProfiles:
+  gpu-single-default:
+    nodeSelector:
+      nvidia.com/gpu.product: "NVIDIA-RTX-PRO-6000-Blackwell-Max-Q-Workstation-Edition"
+      nvidia.com/gpu.memory: "97887"
+    requests:
+      nvidia.com/gpu: 1
+    limits:
+      nvidia.com/gpu: 1
+    runtimeClassName: nvidia
+
+  gpu-tp2-balanced:
+    nodeSelector:
+      nvidia.com/gpu.product: "NVIDIA-RTX-PRO-6000-Blackwell-Max-Q-Workstation-Edition"
+      nvidia.com/gpu.memory: "97887"
+    requests:
+      nvidia.com/gpu: 2
+    limits:
+      nvidia.com/gpu: 2
+    runtimeClassName: nvidia
+
+  gpu-tp2-maxctx:
+    nodeSelector:
+      nvidia.com/gpu.product: "NVIDIA-RTX-PRO-6000-Blackwell-Max-Q-Workstation-Edition"
+      nvidia.com/gpu.memory: "97887"
+    requests:
+      nvidia.com/gpu: 2
+    limits:
+      nvidia.com/gpu: 2
+    runtimeClassName: nvidia
+EOF
+
+cat values-kubeai-local-gpu.yaml
+
+python manage.py kubeai-sync-resource-profiles --from-file values-kubeai-local-gpu.yaml
+python manage.py render
+python manage.py deploy
+
+kubectl -n default delete pod -l model=qwen2-5-7b-instruct-turbo-default
+
+watch -n 1 'kubectl -n default get pods; echo; kubectl -n default get models'
